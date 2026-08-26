@@ -1,0 +1,28 @@
+name: Análisis semántico
+
+on:
+  workflow_dispatch: {}  # solo manual: el corpus de texto es fijo, no hay nada que revisar a diario
+
+jobs:
+  analisis-semantico:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300  # margen amplio: la primera ejecución procesa ~17.500 textos en CPU
+    steps:
+      - name: Descargar el código del repositorio
+        uses: actions/checkout@v4
+
+      - name: Preparar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar PyTorch (CPU-only)
+        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Instalar el resto de dependencias
+        run: pip install -r requirements-nlp.txt
+
+      - name: Ejecutar el análisis semántico
+        env:
+          GDRIVE_SERVICE_ACCOUNT_KEY: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_KEY }}
+        run: python src/04_analisis_semantico.py
