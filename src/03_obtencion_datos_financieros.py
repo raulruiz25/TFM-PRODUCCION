@@ -10,6 +10,8 @@ tanto en local (para depuración) como en la carpeta compartida de Drive.
 Pensado para ejecutarse sin intervención humana (GitHub Actions).
 """
 
+import json
+import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -96,9 +98,6 @@ HTTP = build_http_session()
 # en este archivo ni en el repositorio, se lee desde una variable de entorno
 # (GDRIVE_SERVICE_ACCOUNT_KEY) que GitHub Actions rellena a partir del
 # secreto del mismo nombre en tiempo de ejecución.
-
-import json
-import os
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
