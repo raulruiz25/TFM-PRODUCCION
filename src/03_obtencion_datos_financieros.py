@@ -41,8 +41,22 @@ CRYPTO_BINANCE_SYMBOLS = {
     "ETH-USD": "ETHUSDT",
 }
 
-START_DATE = "2024-11-01"  # alineado con FECHA_INICIO del pipeline de texto
-END_DATE = "2026-06-30"
+# MODE controla cuánto histórico se pide:
+#   "incremental" (por defecto): solo los últimos LOOKBACK_DAYS días, para las
+#       ejecuciones automáticas diarias — rápido y no satura las APIs externas.
+#   "backfill": el histórico completo desde BACKFILL_START_DATE — se ejecuta
+#       UNA SOLA VEZ a mano (o desde "Run workflow" con este modo) para poblar
+#       Drive por primera vez. No forma parte de la ejecución programada diaria.
+MODE = os.environ.get("MODE", "incremental")
+LOOKBACK_DAYS = 5  # margen de seguridad: si un día falla, el siguiente lo recupera
+BACKFILL_START_DATE = "2024-11-01"  # alineado con FECHA_INICIO del pipeline de texto
+
+_today = datetime.now(timezone.utc).date()
+START_DATE = (
+    BACKFILL_START_DATE if MODE == "backfill"
+    else (_today - pd.Timedelta(days=LOOKBACK_DAYS)).isoformat()
+)
+END_DATE = _today.isoformat()
 
 LOCAL_DIR = Path("data_raw_financiero")  # carpeta temporal del runner de GitHub Actions
 
@@ -52,6 +66,27 @@ DRIVE_OUTPUT_FOLDER_NAME = "RAW - Datos Financieros"
 BINANCE_INTERVAL = "1d"
 BINANCE_BASE_URL = "https://data-api.binance.vision/api/v3/klines"
 BINANCE_LIMIT = 1000
+
+
+def build_http_session() -> requests.Session:
+    """Sesión HTTP con reintentos automáticos ante cortes de red puntuales
+    (timeouts, errores 429/500-504, o el servidor cerrando la conexión a
+    medio TLS-handshake, como el SSLEOFError que puede dar Binance)."""
+    from requests.adapters import HTTPAdapter
+    from urllib3.util.retry import Retry
+
+    session = requests.Session()
+    retry = Retry(
+        total=5, connect=5, read=5, status=5,
+        backoff_factor=2,  # espera 2s, 4s, 8s, 16s, 32s entre reintentos
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=["GET"],
+    )
+    session.mount("https://", HTTPAdapter(max_retries=retry))
+    return session
+
+
+HTTP = build_http_session()
 
 
 # --------------------------------------------------------------------------
@@ -166,10 +201,45 @@ def subir_o_actualizar_archivo(drive_service, ruta_local: str, carpeta_drive_id:
         return archivo["id"]
 
 
+def descargar_csv_existente(drive_service, carpeta_drive_id: str, nombre_archivo: str) -> pd.DataFrame | None:
+    """Si ya existe un CSV con ese nombre en Drive, lo descarga y lo devuelve como
+    DataFrame. Si no existe (primera vez, o modo backfill), devuelve None."""
+    from googleapiclient.http import MediaIoBaseDownload
+    import io
+
+    query = f"name = '{nombre_archivo}' and '{carpeta_drive_id}' in parents and trashed = false"
+    resultado = drive_service.files().list(q=query, fields="files(id, name)").execute()
+    encontrados = resultado.get("files", [])
+    if not encontrados:
+        return None
+
+    file_id = encontrados[0]["id"]
+    request = drive_service.files().get_media(fileId=file_id)
+    buffer = io.BytesIO()
+    downloader = MediaIoBaseDownload(buffer, request)
+    done = False
+    while not done:
+        _, done = downloader.next_chunk()
+    buffer.seek(0)
+    return pd.read_csv(buffer, parse_dates=["DATE"])
+
+
+def fusionar_con_existente(df_nuevo: pd.DataFrame, df_existente: pd.DataFrame | None) -> pd.DataFrame:
+    """Combina los datos nuevos con los ya guardados, sin duplicar fechas.
+    Si una fecha aparece en ambos, gana la versión nueva (por si se corrigió)."""
+    if df_existente is None or df_existente.empty:
+        return df_nuevo.sort_values("DATE").reset_index(drop=True)
+
+    combinado = pd.concat([df_existente, df_nuevo], ignore_index=True)
+    combinado = combinado.drop_duplicates(subset="DATE", keep="last")
+    return combinado.sort_values("DATE").reset_index(drop=True)
+
+
 def save_dataset(drive_service, df: pd.DataFrame, ticker: str, asset_class: str,
                   source: str, granularity: str, local_dir: Path,
                   drive_folder_id: str) -> str:
-    """Añade metadatos estándar, guarda el CSV localmente y lo sube/actualiza en Drive."""
+    """Añade metadatos estándar, fusiona con lo que ya hubiera en Drive
+    (modo incremental) y guarda el CSV resultante en local y en Drive."""
     df = df.copy()
 
     if "VOLUME" in df.columns:
@@ -185,6 +255,10 @@ def save_dataset(drive_service, df: pd.DataFrame, ticker: str, asset_class: str,
     safe_name = ticker.replace("^", "").replace("/", "_")
     nombre_archivo = f"{safe_name}.csv"
     local_path = local_dir / nombre_archivo
+
+    if MODE == "incremental":
+        df_existente = descargar_csv_existente(drive_service, drive_folder_id, nombre_archivo)
+        df = fusionar_con_existente(df, df_existente)
 
     df.to_csv(local_path, index=False)
     subir_o_actualizar_archivo(drive_service, str(local_path), drive_folder_id, nombre_archivo)
@@ -209,14 +283,14 @@ def fetch_binance_volume_detail(symbol: str, interval: str, start: str, end: str
             "symbol": symbol, "interval": interval,
             "startTime": cursor, "endTime": end_ms, "limit": BINANCE_LIMIT,
         }
-        resp = requests.get(BINANCE_BASE_URL, params=params, timeout=15)
+        resp = HTTP.get(BINANCE_BASE_URL, params=params, timeout=15)
         resp.raise_for_status()
         rows = resp.json()
         if not rows:
             break
         all_rows.extend(rows)
         cursor = rows[-1][0] + 1
-        time.sleep(0.3)
+        time.sleep(0.5)
 
     df = pd.DataFrame(all_rows, columns=[
         "open_time", "open", "high", "low", "close", "volume_btc",
@@ -248,7 +322,7 @@ def find_daily_high_low_time(symbol: str, date: str) -> dict:
         "endTime": int(day_end.timestamp() * 1000),
         "limit": 1000,
     }
-    resp = requests.get(BINANCE_BASE_URL, params=params, timeout=15)
+    resp = HTTP.get(BINANCE_BASE_URL, params=params, timeout=15)
     resp.raise_for_status()
     rows = resp.json()
 
@@ -287,7 +361,7 @@ def fetch_high_low_times_range(symbol: str, start_date: str, end_date: str, verb
             r = {"DATE": date_str, "HIGH_TIME": None, "LOW_TIME": None}
             print(f"  aviso: fallo en {date_str} ({symbol}): {e}")
         results.append(r)
-        time.sleep(0.25)
+        time.sleep(0.5)
         if (i + 1) % verbose_every == 0:
             print(f"  {symbol}: procesados {i + 1}/{len(dates)} días...")
 
@@ -343,6 +417,14 @@ def main():
             left_on="DATE_KEY", right_on="DATE", how="left", suffixes=("", "_HL")
         ).drop(columns=["DATE_KEY", "DATE_HL"], errors="ignore")
 
+        # En ejecuciones sucesivas HIGH_TIME/LOW_TIME ya existían: nos quedamos
+        # con el valor nuevo si lo hay, y si no, con el que ya estaba guardado.
+        for col in ["HIGH_TIME", "LOW_TIME"]:
+            col_nueva = f"{col}_HL"
+            if col_nueva in df_merged.columns:
+                df_merged[col] = df_merged[col_nueva].combine_first(df_merged[col])
+                df_merged = df_merged.drop(columns=[col_nueva])
+
         df_merged.to_csv(local_path, index=False)
         subir_o_actualizar_archivo(drive_service, str(local_path), drive_folder_id, f"{safe_name}.csv")
         print(f"  Actualizado: {safe_name}.csv (+{df_merged['HIGH_TIME'].notna().sum()} días con hora exacta)")
@@ -366,6 +448,12 @@ def main():
                 df_vol[["DATE", "TAKER_BUY_RATIO"]],
                 left_on="DATE_KEY", right_on="DATE", how="left", suffixes=("", "_VOL")
             ).drop(columns=["DATE_KEY", "DATE_VOL"], errors="ignore")
+
+            if "TAKER_BUY_RATIO_VOL" in df_price.columns:
+                df_price["TAKER_BUY_RATIO"] = df_price["TAKER_BUY_RATIO_VOL"].combine_first(
+                    df_price["TAKER_BUY_RATIO"]
+                )
+                df_price = df_price.drop(columns=["TAKER_BUY_RATIO_VOL"])
 
         df_price.to_csv(local_path, index=False)
         subir_o_actualizar_archivo(drive_service, str(local_path), drive_folder_id, f"{safe_name}.csv")
