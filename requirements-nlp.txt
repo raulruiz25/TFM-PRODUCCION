@@ -1,0 +1,14 @@
+pandas
+numpy
+scikit-learn
+emoji
+ftfy
+google-api-python-client
+google-auth
+openpyxl
+transformers
+sentencepiece
+accelerate
+
+# CPU-only: la versión con soporte de GPU pesa varios GB y no la necesitamos,
+# GitHub Actions no da GPU gratis. Se instala aparte con --index-url en el workflow.
