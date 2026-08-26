@@ -1,0 +1,27 @@
+name: Ingesta de datos financieros
+
+on:
+  schedule:
+    # Todos los días a las 06:00 UTC (07:00 hora de España en invierno, 08:00 en verano)
+    - cron: "0 6 * * *"
+  workflow_dispatch: {}  # permite lanzarlo también a mano, desde la pestaña "Actions"
+
+jobs:
+  ingesta-financiera:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el código del repositorio
+        uses: actions/checkout@v4
+
+      - name: Preparar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Ejecutar el script de ingesta
+        env:
+          GDRIVE_SERVICE_ACCOUNT_KEY: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_KEY }}
+        run: python src/03_obtencion_datos_financieros.py
