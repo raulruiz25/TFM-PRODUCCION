@@ -1,0 +1,29 @@
+name: Análisis de impacto en mercados
+
+on:
+  schedule:
+    # 6:30 UTC — media hora después de la ingesta financiera, para que ya
+    # tenga los datos financieros del día disponibles en Drive.
+    - cron: "30 6 * * *"
+  workflow_dispatch: {}  # también lanzable a mano
+
+jobs:
+  analisis-impacto:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Descargar el código del repositorio
+        uses: actions/checkout@v4
+
+      - name: Preparar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements-impacto.txt
+
+      - name: Ejecutar el análisis de impacto en mercados
+        env:
+          GDRIVE_SERVICE_ACCOUNT_KEY: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_KEY }}
+        run: python src/05_analisis_impacto_mercados.py
