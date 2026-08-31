@@ -1,16 +1,18 @@
 name: Análisis de impacto en mercados
 
 on:
-  schedule:
-    # 6:30 UTC — media hora después de la ingesta financiera, para que ya
-    # tenga los datos financieros del día disponibles en Drive.
-    - cron: "30 6 * * *"
+  workflow_run:
+    workflows: ["Análisis semántico"]
+    types: [completed]
   workflow_dispatch: {}  # también lanzable a mano
 
 jobs:
   analisis-impacto:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # Solo se ejecuta si el disparo es manual, o si el análisis semántico
+    # terminó con éxito (nunca tras un fallo del paso anterior).
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     steps:
       - name: Descargar el código del repositorio
         uses: actions/checkout@v4

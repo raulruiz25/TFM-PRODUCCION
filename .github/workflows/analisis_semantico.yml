@@ -1,12 +1,18 @@
 name: Análisis semántico
 
 on:
-  workflow_dispatch: {}  # solo manual: el corpus de texto es fijo, no hay nada que revisar a diario
+  workflow_run:
+    workflows: ["Ingesta de datos financieros"]
+    types: [completed]
+  workflow_dispatch: {}  # también lanzable a mano
 
 jobs:
   analisis-semantico:
     runs-on: ubuntu-latest
-    timeout-minutes: 300  # margen amplio: la primera ejecución procesa ~17.500 textos en CPU
+    timeout-minutes: 300  # margen amplio: si algún día hay texto nuevo real, puede tardar bastante
+    # Solo se ejecuta si el disparo es manual, o si la ingesta financiera
+    # terminó con éxito (nunca tras un fallo del paso anterior).
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     steps:
       - name: Descargar el código del repositorio
         uses: actions/checkout@v4
