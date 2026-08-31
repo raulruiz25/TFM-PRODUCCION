@@ -1,0 +1,8 @@
+pandas
+numpy
+scipy
+scikit-learn
+statsmodels
+tensorflow-cpu
+google-api-python-client
+google-auth
