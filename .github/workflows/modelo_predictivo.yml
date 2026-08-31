@@ -1,16 +1,18 @@
 name: Modelo predictivo
 
 on:
-  schedule:
-    # 7:00 UTC — después de la ingesta financiera (6:00) y el análisis de
-    # impacto en mercados (6:30), para partir siempre de datos frescos.
-    - cron: "0 7 * * *"
-  workflow_dispatch: {}
+  workflow_run:
+    workflows: ["Análisis de impacto en mercados"]
+    types: [completed]
+  workflow_dispatch: {}  # también lanzable a mano
 
 jobs:
   modelo-predictivo:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Solo se ejecuta si el disparo es manual, o si el análisis de impacto
+    # en mercados terminó con éxito (nunca tras un fallo del paso anterior).
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     steps:
       - name: Descargar el código del repositorio
         uses: actions/checkout@v4
