@@ -54,7 +54,7 @@ PREDICCIONES_FILENAME = "predicciones_hoy.csv"
 DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive"]
 
 FECHA_FIN_TFM = pd.Timestamp("2026-06-30")
-UMBRAL_DECISION = 0.3
+UMBRAL_DECISION = 0.5
 
 FEATURE_COLS = [
     "ticker", "log_return", "volatility_20d", "volume_zscore_20d", "is_anomaly",
@@ -222,10 +222,12 @@ def validacion_cruzada_temporal(dataset_modelado, n_splits=5):
 # --------------------------------------------------------------------------
 
 def entrenar_modelo_final(dataset_modelado):
-    """Random Forest: la elección final del TFM (apartado 7.1), sobre el
-    histórico completo disponible en esta ejecución."""
+    """LightGBM: la elección final del TFM (apartado 7.1) tras la comparación
+    de modelos baseline — mejor equilibrio precisión/recall que Random Forest
+    dado el desequilibrio de clases (evento_importante en solo el 9.5%)."""
     X_full, y_full = preparar_X_y(dataset_modelado)
-    modelo_final = RandomForestClassifier(n_estimators=300, max_depth=8, class_weight="balanced", random_state=42)
+    modelo_final = LGBMClassifier(n_estimators=200, max_depth=5, learning_rate=0.05,
+                                   random_state=42, class_weight="balanced", verbose=-1)
     modelo_final.fit(X_full, y_full)
     return modelo_final, X_full, y_full
 
@@ -239,7 +241,8 @@ def evaluar_matriz_confusion(dataset_modelado):
     X_train, y_train = preparar_X_y(train_df)
     X_test, y_test = preparar_X_y(test_df, columnas_referencia=X_train.columns)
 
-    modelo_eval = RandomForestClassifier(n_estimators=300, max_depth=8, class_weight="balanced", random_state=42)
+    modelo_eval = LGBMClassifier(n_estimators=200, max_depth=5, learning_rate=0.05,
+                                  random_state=42, class_weight="balanced", verbose=-1)
     modelo_eval.fit(X_train, y_train)
     y_proba_test = modelo_eval.predict_proba(X_test)[:, 1]
 
@@ -260,7 +263,8 @@ def evaluar_matriz_confusion(dataset_modelado):
 def calcular_shap_importancia(modelo_eval, X_test):
     explainer = shap.TreeExplainer(modelo_eval)
     shap_values = explainer.shap_values(X_test)
-    shap_values_evento = shap_values[1] if isinstance(shap_values, list) else shap_values[:, :, 1]
+    shap_values_evento = shap_values[1] if isinstance(shap_values, list) \
+        else shap_values[:, :, 1] if shap_values.ndim == 3 else shap_values
 
     importancia = pd.DataFrame({
         "variable": X_test.columns,
@@ -289,7 +293,8 @@ def contribucion_por_familia(dataset_modelado):
     for nombre, cols in [("Solo financieras", features_financieras),
                           ("Solo comunicación (+ ticker)", features_comunicacion),
                           ("Ambas", list(X_train.columns))]:
-        modelo_temp = RandomForestClassifier(n_estimators=300, max_depth=8, class_weight="balanced", random_state=42)
+        modelo_temp = LGBMClassifier(n_estimators=200, max_depth=5, learning_rate=0.05,
+                                      random_state=42, class_weight="balanced", verbose=-1)
         modelo_temp.fit(X_train[cols], y_train)
         proba_temp = modelo_temp.predict_proba(X_test[cols])[:, 1]
         filas.append({"familia": nombre, "n_features": len(cols), "auc": roc_auc_score(y_test, proba_temp)})
