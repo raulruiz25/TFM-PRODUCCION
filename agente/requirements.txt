@@ -1,0 +1,26 @@
+# PyTorch CPU-only: igual que en .github/workflows/analisis_semantico.yml,
+# para no descargar la build con soporte GPU (varios GB de más e inútil aquí,
+# Streamlit Community Cloud no da GPU gratis).
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+
+streamlit
+pandas
+numpy
+joblib
+scikit-learn
+lightgbm
+
+# Acceso a Drive (mismas versiones que ya usa el repo de producción)
+google-api-python-client
+google-auth
+
+# Modelo de sentimiento fine-tuned (mismo preprocesado y librerías que el módulo 2)
+transformers
+sentencepiece
+accelerate
+emoji
+ftfy
+
+# Generación de lenguaje natural (capa gratuita)
+google-generativeai
