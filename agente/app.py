@@ -370,10 +370,6 @@ st.markdown(
         <h1 style="margin: 0.5rem 0 0.25rem 0; font-size: 2rem;">
             Agente de impacto de comunicaciones en mercados financieros
         </h1>
-        <p style="color: #9CA3AF; font-size: 0.95rem; margin: 0;">
-            Auditor de la evidencia ya generada por el TFM — no un predictor de mercado.
-            Pregunta sobre los resultados ya calculados, o pídeme analizar un comunicado nuevo.
-        </p>
     </div>
     """,
     unsafe_allow_html=True,
