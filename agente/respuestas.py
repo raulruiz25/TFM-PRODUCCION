@@ -514,6 +514,23 @@ def generar_respuesta_evolucion_precio(ticker: str, datos: dict, fecha_inicio: s
     return texto, grafico
 
 
+def _fecha_ultima_comunicacion_real(datos: dict) -> str | None:
+    """
+    Última fecha con comunicaciones reales procesadas (n_comunicaciones > 0)
+    en dataset_consolidado_05 — se usa para avisar en "predicción de hoy"
+    cuando el corpus de comunicaciones lleva tiempo sin actualizarse, para
+    que quede claro que esa predicción concreta se apoya, en la práctica,
+    solo en las condiciones financieras.
+    """
+    dataset = datos.get("dataset_consolidado_05")
+    if dataset is None or "n_comunicaciones" not in dataset.columns:
+        return None
+    con_datos = dataset[dataset["n_comunicaciones"] > 0]
+    if con_datos.empty:
+        return None
+    return str(con_datos["date"].max())[:10]
+
+
 def generar_respuesta_pregunta_datos(mensaje_usuario: str, clasificacion: dict, datos: dict):
     """Devuelve (texto, grafico_o_none)."""
     activo_no_soportado = clasificacion.get("activo_no_soportado")
@@ -542,6 +559,21 @@ def generar_respuesta_pregunta_datos(mensaje_usuario: str, clasificacion: dict, 
         respuesta = _llamar_gemini(_prompt_pregunta_datos(mensaje_usuario, tema or "visión general", texto_plantilla))
     except Exception:
         respuesta = texto_plantilla
+
+    # Aviso específico de "predicción de hoy": si el corpus de comunicaciones
+    # lleva tiempo sin procesar nada nuevo, se deja claro — para no dar la
+    # impresión de que la cifra refleja comunicados recientes cuando, en la
+    # práctica, solo se está apoyando en las condiciones financieras.
+    if tema == "predicciones_hoy":
+        fecha_corte = _fecha_ultima_comunicacion_real(datos)
+        if fecha_corte:
+            aviso_comunicaciones = (
+                f"El corpus de comunicaciones (Trump, Musk, Fed) tiene datos reales procesados "
+                f"hasta el {fecha_corte}. Desde entonces no se han incorporado comunicados nuevos, "
+                f"así que esta predicción se apoya, en la práctica, casi en su totalidad en las "
+                f"condiciones financieras del día, no en comunicaciones recientes."
+            )
+            respuesta += "\n\n" + _aviso_html(aviso_comunicaciones)
 
     grafico = _generar_grafico_pregunta_datos(tema, tickers, datos)
     return _con_cita_fuente(respuesta, tema), grafico
